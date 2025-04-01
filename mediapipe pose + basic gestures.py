@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 from collections import deque, Counter
 import numpy as np
+import math
 
 
 
@@ -24,6 +25,72 @@ classification_history = deque(maxlen=classification_history_length)
 def get_coord(landmark):
     """Returns (x, y, z) coordinates from a landmark."""
     return landmark.x, landmark.y, landmark.z
+
+def calculate_angle(a, b, c):
+    """Calculates angle ABC (in degrees)"""
+    try:
+        # Calculate vectors BA and BC
+        vec_ba = np.array([a.x - b.x, a.y - b.y, a.z - b.z])
+        vec_bc = np.array([c.x - b.x, c.y - b.y, c.z - b.z])
+
+        # Dot product
+        dot_product = np.dot(vec_ba, vec_bc)
+
+        # Magnitudes
+        mag_ba = np.linalg.norm(vec_ba)
+        mag_bc = np.linalg.norm(vec_bc)
+
+        # Cosine of the angle
+        if mag_ba == 0 or mag_bc == 0: return 0 # Avoid division by zero
+        cosine_angle = dot_product / (mag_ba * mag_bc)
+
+        # Ensure cosine value is within valid range [-1, 1] due to potential float errors
+        cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+
+        # Calculate angle in radians and convert to degrees
+        angle = np.arccos(cosine_angle)
+        return np.degrees(angle)
+    except Exception as e:
+        # print(f"Error calculating angle: {e}")
+        return 0
+
+# --- NEW: Helper function to calculate 2D distance ---
+def calculate_distance(p1, p2):
+    """Calculates Euclidean distance between two points (using x, y)"""
+    try:
+        return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+    except Exception as e:
+        # print(f"Error calculating distance: {e}")
+        return float('inf')
+
+# --- NEW: Helper function for cumulative angle change around a center ---
+def calculate_cumulative_angle_change(points_history, center):
+    """Calculates the total angular change (in radians) of points around a center."""
+    if len(points_history) < 3 or not center: return 0
+
+    total_angle_change = 0
+    prev_angle = None
+
+    for point_coords in points_history:
+        # Use palm center history which are (x,y,z) tuples
+        dx = point_coords[0] - center.x
+        dy = point_coords[1] - center.y
+
+        # Calculate angle using atan2 (more robust than atan)
+        current_angle = math.atan2(dy, dx)
+
+        if prev_angle is not None:
+            # Calculate difference, handling wrap-around (e.g., from +pi to -pi)
+            delta_angle = current_angle - prev_angle
+            if delta_angle > math.pi:
+                delta_angle -= 2 * math.pi
+            elif delta_angle < -math.pi:
+                delta_angle += 2 * math.pi
+            total_angle_change += delta_angle
+
+        prev_angle = current_angle
+
+    return abs(total_angle_change) # Return absolute total change
 
 # --- Palm Center Function (from Pose) ---
 def get_palm_center(landmarks, hand='left'):
@@ -68,6 +135,93 @@ def count_direction_changes(values, noise_threshold=0.015):
         if current_sign != 0:
              prev_sign = current_sign
     return changes
+
+# --- Arm Circling Detection Function (Much More Sensitive) ---
+def detect_arm_circle(palm_history, shoulder, elbow, wrist,
+                      straight_arm_angle_thresh=40,   # <<< Reduced: Allow more bend
+                      downward_offset=0.01,            # <<< Reduced: Wrist just needs to be slightly below shoulder
+                      min_cumulative_angle=math.pi / 30, # <<< Reduced: Radians (~120 degrees) - less than a semi-circle needed
+                      max_dist_variation_ratio=0.70,   # <<< Increased: Allow much less circular paths
+                      min_xy_movement_range=0.01):     # <<< Reduced: Require less overall movement
+    """
+    Detects a circular motion with a relatively straight arm pointing somewhat downwards.
+    MUCH MORE SENSITIVE version. Includes debug prints.
+    """
+    DEBUG_CIRCLE = True # Keep True for debugging
+
+    # --- Preliminary Checks ---
+    if not all([shoulder, elbow, wrist]):
+        # if DEBUG_CIRCLE: print("Debug Circle: Missing key landmarks (S/E/W).") # Keep prints commented unless needed
+        return False
+    if not all(hasattr(lm, 'visibility') and lm.visibility > 0.4 for lm in [shoulder, elbow, wrist]): # Slightly relaxed visibility check too
+        # if DEBUG_CIRCLE: print("Debug Circle: Low visibility on key landmarks (S/E/W).")
+        return False
+    if len(palm_history) < palm_history_length // 2 : # <<< Reduced: Require less history (faster detection, less smooth)
+        # if DEBUG_CIRCLE: print(f"Debug Circle: Insufficient history ({len(palm_history)} < {palm_history_length // 2}).")
+        return False
+    try:
+        if not all(isinstance(p, tuple) and len(p) == 3 for p in palm_history):
+            # if DEBUG_CIRCLE: print("Debug Circle: Invalid data in palm history.")
+            return False
+    except Exception:
+        # if DEBUG_CIRCLE: print("Debug Circle: Error checking palm history validity.")
+        return False
+
+
+    # --- Gesture Specific Checks ---
+    try:
+        # 1. Static: Arm Straightness
+        elbow_angle = calculate_angle(shoulder, elbow, wrist)
+        is_arm_straight = (elbow_angle >= straight_arm_angle_thresh)
+        if DEBUG_CIRCLE and not is_arm_straight: print(f"Debug Circle: Arm angle {elbow_angle:.1f} < {straight_arm_angle_thresh} -> FAIL")
+        # Don't return yet, let other checks run for debugging
+
+        # 2. Static: Arm Pointing Downwards?
+        is_pointing_down = (wrist.y > shoulder.y + downward_offset)
+        if DEBUG_CIRCLE and not is_pointing_down: print(f"Debug Circle: WristY {wrist.y:.3f} <= ShoulderY+Offset {shoulder.y + downward_offset:.3f} -> FAIL")
+        # Don't return yet
+
+        # --- Dynamic Checks (Using Palm History) ---
+        palm_coords = [(p[0], p[1]) for p in palm_history] # Extract x,y tuples
+
+        # 3. Dynamic: Sufficient Movement Range?
+        x_coords = [p[0] for p in palm_coords]
+        y_coords = [p[1] for p in palm_coords]
+        x_range = max(x_coords) - min(x_coords)
+        y_range = max(y_coords) - min(y_coords)
+        # <<< Changed to OR: Allow movement mainly in one direction for simpler "sweeps"
+        has_min_movement = (x_range >= min_xy_movement_range or y_range >= min_xy_movement_range)
+        if DEBUG_CIRCLE and not has_min_movement: print(f"Debug Circle: Movement range X={x_range:.2f}, Y={y_range:.2f} too small (min={min_xy_movement_range}) -> FAIL")
+        # Don't return yet
+
+        # 4. Dynamic: Distance Consistency (Circular Path) - Now much less strict
+        distances = [math.sqrt((p[0] - shoulder.x)**2 + (p[1] - shoulder.y)**2) for p in palm_coords]
+        if not distances: return False
+        mean_dist = np.mean(distances)
+        std_dev_dist = np.std(distances)
+        if mean_dist == 0: return False
+        dist_variation_ratio = std_dev_dist / mean_dist
+        is_dist_consistent = (dist_variation_ratio <= max_dist_variation_ratio)
+        if DEBUG_CIRCLE and not is_dist_consistent: print(f"Debug Circle: Dist variation ratio {dist_variation_ratio:.2f} > {max_dist_variation_ratio} -> FAIL")
+        # Don't return yet
+
+        # 5. Dynamic: Sufficient Angular Change? - Now much less strict
+        cumulative_angle = calculate_cumulative_angle_change(palm_history, shoulder)
+        has_enough_angle = (cumulative_angle >= min_cumulative_angle)
+        if DEBUG_CIRCLE and not has_enough_angle: print(f"Debug Circle: Cumulative angle {cumulative_angle:.2f} rad < {min_cumulative_angle:.2f} rad -> FAIL")
+        # Don't return yet
+
+        # Combine results - ALL must still pass for detection
+        final_result = is_arm_straight and is_pointing_down and has_min_movement and is_dist_consistent and has_enough_angle
+
+        if DEBUG_CIRCLE and final_result: print("Debug Circle: ALL CHECKS PASSED -> DETECTED")
+        elif DEBUG_CIRCLE: print("---") # Separator if it failed
+
+        return final_result
+
+    except (ValueError, IndexError, TypeError, AttributeError) as e:
+        if DEBUG_CIRCLE: print(f"Error during detect_arm_circle checks: {e}")
+        return False
 
 # --- Dynamic Gesture Detection Functions (Waving, Knee Smacking - from Pose) ---
 def detect_waving(palm_history, shoulder_y, threshold=0.08, min_direction_changes=2):
@@ -146,25 +300,52 @@ def is_pointing_down(hand_landmarks):
 
 def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing, right_pointing):
     """
-    Classify pose: Pointing Down ("Sit") has highest priority.
-    Then Waving, Knee Smacking, Hands Up.
-    Labels adjusted for mirrored display.
+    Classify pose: "Sit" (Pointing) > "Spin Around" (Arm Circle) > Waving > Knee Smacking > Hands Up.
+    Labels are NOT swapped for mirroring.
     """
-    
     classification = "No Pose"
 
     try:
+        # --- HIGHEST PRIORITY: Pointing Down ("Sit") ---
         if left_pointing or right_pointing:
-             return "Sit" 
+             return "Sit"
 
+        # --- Check Pose Landmarks Exist for other gestures ---
+        if pose_landmarks and len(pose_landmarks) > mp_pose.PoseLandmark.RIGHT_WRIST.value: # Basic check
 
-        if pose_landmarks:
-            l_shoulder = pose_landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER.value]
-            r_shoulder = pose_landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value]
-            l_knee = pose_landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value]
-            r_knee = pose_landmarks[mp_pose.PoseLandmark.RIGHT_KNEE.value]
+            # Define landmark indices
+            l_shoulder_idx = mp_pose.PoseLandmark.LEFT_SHOULDER.value
+            r_shoulder_idx = mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+            l_elbow_idx = mp_pose.PoseLandmark.LEFT_ELBOW.value
+            r_elbow_idx = mp_pose.PoseLandmark.RIGHT_ELBOW.value
+            l_wrist_idx = mp_pose.PoseLandmark.LEFT_WRIST.value
+            r_wrist_idx = mp_pose.PoseLandmark.RIGHT_WRIST.value
+            l_knee_idx = mp_pose.PoseLandmark.LEFT_KNEE.value
+            r_knee_idx = mp_pose.PoseLandmark.RIGHT_KNEE.value
 
+            # Get landmarks safely
+            l_shoulder = pose_landmarks[l_shoulder_idx]
+            r_shoulder = pose_landmarks[r_shoulder_idx]
+            l_elbow = pose_landmarks[l_elbow_idx]
+            r_elbow = pose_landmarks[r_elbow_idx]
+            l_wrist = pose_landmarks[l_wrist_idx]
+            r_wrist = pose_landmarks[r_wrist_idx]
+            l_knee = pose_landmarks[l_knee_idx]
+            r_knee = pose_landmarks[r_knee_idx]
 
+            # --- NEW: Arm Circle ("Spin Around") Check ---
+            left_arm_circle = False
+            if all(lm.visibility > 0.5 for lm in [l_shoulder, l_elbow, l_wrist]) and left_palm_hist:
+                 left_arm_circle = detect_arm_circle(left_palm_hist, l_shoulder, l_elbow, l_wrist)
+            right_arm_circle = False
+            if all(lm.visibility > 0.5 for lm in [r_shoulder, r_elbow, r_wrist]) and right_palm_hist:
+                 right_arm_circle = detect_arm_circle(right_palm_hist, r_shoulder, r_elbow, r_wrist)
+
+            if left_arm_circle or right_arm_circle:
+                 return "Spin Around" # Single label for either arm
+            # --- END NEW ---
+
+            # --- Waving Check ---
             left_waving = False
             if l_shoulder.visibility > 0.5 and left_palm_hist:
                 left_waving = detect_waving(left_palm_hist, l_shoulder.y)
@@ -173,10 +354,10 @@ def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing
                  right_waving = detect_waving(right_palm_hist, r_shoulder.y)
 
             if left_waving and right_waving: return "Waving Both Hands"
-            elif left_waving: return "Waving Left Hand"  
-            elif right_waving: return "Waving Right Hand"   
+            elif left_waving: return "Waving Left Hand"
+            elif right_waving: return "Waving Right Hand"
 
-
+            # --- Knee Smacking Check ---
             left_knee_smack = False
             if l_knee.visibility > 0.5 and left_palm_hist:
                  left_knee_smack = detect_knee_smacking(left_palm_hist, l_knee.x, l_knee.y, l_knee.z)
@@ -186,50 +367,41 @@ def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing
 
             if left_knee_smack or right_knee_smack: return "Knee Smacking"
 
+            # --- Static Hands Up Check ---
+            left_hand_up = (l_wrist.visibility > 0.5 and l_shoulder.visibility > 0.5 and
+                            l_wrist.y < l_shoulder.y)
+            right_hand_up = (r_wrist.visibility > 0.5 and r_shoulder.visibility > 0.5 and
+                             r_wrist.y < r_shoulder.y)
 
-        if pose_landmarks:
-            l_wrist_idx = mp_pose.PoseLandmark.LEFT_WRIST.value
-            r_wrist_idx = mp_pose.PoseLandmark.RIGHT_WRIST.value
-            l_shoulder_idx = mp_pose.PoseLandmark.LEFT_SHOULDER.value
-            r_shoulder_idx = mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+            if left_hand_up and right_hand_up: return "Hands Up"
+            elif left_hand_up: return "Left Hand Raised"
+            elif right_hand_up: return "Right Hand Raised"
 
-            if all(idx < len(pose_landmarks) for idx in [l_wrist_idx, r_wrist_idx, l_shoulder_idx, r_shoulder_idx]):
-                l_wrist = pose_landmarks[l_wrist_idx]
-                r_wrist = pose_landmarks[r_wrist_idx]
-                l_shoulder = pose_landmarks[l_shoulder_idx]
-                r_shoulder = pose_landmarks[r_shoulder_idx]
-
-                left_hand_up = l_wrist.visibility > 0.5 and l_shoulder.visibility > 0.5 and l_wrist.y < l_shoulder.y
-                right_hand_up = r_wrist.visibility > 0.5 and r_shoulder.visibility > 0.5 and r_wrist.y < r_shoulder.y
-
-                if left_hand_up and right_hand_up: return "Hands Up"
-                elif left_hand_up: return "Left Hand Raised" 
-                elif right_hand_up: return "Right Hand Raised"  
-
-
-        return classification 
+        return classification
 
     except (IndexError, KeyError, TypeError, AttributeError) as e:
+         # print(f"Error during classification: {e}")
          return "Error Processing"
 
 
 
-def get_final_classification(history, waving_threshold=6, knee_smacking_threshold=6, pointing_threshold=4): # Lowered pointing threshold
-    """Determine final classification. "Sit" has highest priority."""
+def get_final_classification(history, waving_threshold=6, knee_smacking_threshold=6, pointing_threshold=4, spin_threshold=5): # Added spin_threshold
+    """Determine final classification. Priority: Sit > Spin > Waving > Knee Smacking."""
     if not history: return "No Pose Detected"
     counts = Counter(history)
 
-
-    if counts["Sit"] >= pointing_threshold: return "Sit" 
-
+    # Priority Order:
+    if counts["Sit"] >= pointing_threshold: return "Sit"
+    if counts["Spin Around"] >= spin_threshold: return "Spin Around" # ADDED SPIN CHECK
     if counts["Waving Both Hands"] >= waving_threshold: return "Waving Both Hands"
-    if counts["Waving Left Hand"] >= waving_threshold: return "Waving Left Hand"   
-    if counts["Waving Right Hand"] >= waving_threshold: return "Waving Right Hand"  
+    if counts["Waving Left Hand"] >= waving_threshold: return "Waving Left Hand"
+    if counts["Waving Right Hand"] >= waving_threshold: return "Waving Right Hand"
     if counts["Knee Smacking"] >= knee_smacking_threshold: return "Knee Smacking"
 
-    filtered_counts = Counter({k: v for k, v in counts.items() if k not in ["No Pose Detected", "Error Processing", "No Pose"]})
+    # Fallback to most common static pose
+    filtered_counts = Counter({k: v for k, v in counts.items() if k not in ["No Pose Detected", "Error Processing", "No Pose", "Spin Around"]}) # Add Spin to filter
     if filtered_counts: return filtered_counts.most_common(1)[0][0]
-    elif counts: return counts.most_common(1)[0][0] 
+    elif counts: return counts.most_common(1)[0][0]
     else: return "No Pose Detected"
 
 
