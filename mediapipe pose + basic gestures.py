@@ -136,27 +136,27 @@ def count_direction_changes(values, noise_threshold=0.015):
              prev_sign = current_sign
     return changes
 
-# --- Arm Circling Detection Function (Much More Sensitive) ---
+# --- Arm Circling Detection Function ---
 def detect_arm_circle(palm_history, shoulder, elbow, wrist,
-                      straight_arm_angle_thresh=40,   # <<< Reduced: Allow more bend
-                      downward_offset=0.01,            # <<< Reduced: Wrist just needs to be slightly below shoulder
-                      min_cumulative_angle=math.pi / 30, # <<< Reduced: Radians (~120 degrees) - less than a semi-circle needed
-                      max_dist_variation_ratio=0.70,   # <<< Increased: Allow much less circular paths
-                      min_xy_movement_range=0.01):     # <<< Reduced: Require less overall movement
+                      straight_arm_angle_thresh=40,   
+                      downward_offset=0.01,            
+                      min_cumulative_angle=math.pi / 30, 
+                      max_dist_variation_ratio=0.70,   
+                      min_xy_movement_range=0.01):     
     """
     Detects a circular motion with a relatively straight arm pointing somewhat downwards.
     MUCH MORE SENSITIVE version. Includes debug prints.
     """
-    DEBUG_CIRCLE = True # Keep True for debugging
+    DEBUG_CIRCLE = True 
 
     # --- Preliminary Checks ---
     if not all([shoulder, elbow, wrist]):
-        # if DEBUG_CIRCLE: print("Debug Circle: Missing key landmarks (S/E/W).") # Keep prints commented unless needed
+        # if DEBUG_CIRCLE: print("Debug Circle: Missing key landmarks (S/E/W).") 
         return False
-    if not all(hasattr(lm, 'visibility') and lm.visibility > 0.4 for lm in [shoulder, elbow, wrist]): # Slightly relaxed visibility check too
+    if not all(hasattr(lm, 'visibility') and lm.visibility > 0.4 for lm in [shoulder, elbow, wrist]): 
         # if DEBUG_CIRCLE: print("Debug Circle: Low visibility on key landmarks (S/E/W).")
         return False
-    if len(palm_history) < palm_history_length // 2 : # <<< Reduced: Require less history (faster detection, less smooth)
+    if len(palm_history) < palm_history_length // 2 : 
         # if DEBUG_CIRCLE: print(f"Debug Circle: Insufficient history ({len(palm_history)} < {palm_history_length // 2}).")
         return False
     try:
@@ -174,25 +174,25 @@ def detect_arm_circle(palm_history, shoulder, elbow, wrist,
         elbow_angle = calculate_angle(shoulder, elbow, wrist)
         is_arm_straight = (elbow_angle >= straight_arm_angle_thresh)
         if DEBUG_CIRCLE and not is_arm_straight: print(f"Debug Circle: Arm angle {elbow_angle:.1f} < {straight_arm_angle_thresh} -> FAIL")
-        # Don't return yet, let other checks run for debugging
+
 
         # 2. Static: Arm Pointing Downwards?
         is_pointing_down = (wrist.y > shoulder.y + downward_offset)
         if DEBUG_CIRCLE and not is_pointing_down: print(f"Debug Circle: WristY {wrist.y:.3f} <= ShoulderY+Offset {shoulder.y + downward_offset:.3f} -> FAIL")
-        # Don't return yet
+
 
         # --- Dynamic Checks (Using Palm History) ---
-        palm_coords = [(p[0], p[1]) for p in palm_history] # Extract x,y tuples
+        palm_coords = [(p[0], p[1]) for p in palm_history]
 
         # 3. Dynamic: Sufficient Movement Range?
         x_coords = [p[0] for p in palm_coords]
         y_coords = [p[1] for p in palm_coords]
         x_range = max(x_coords) - min(x_coords)
         y_range = max(y_coords) - min(y_coords)
-        # <<< Changed to OR: Allow movement mainly in one direction for simpler "sweeps"
+
         has_min_movement = (x_range >= min_xy_movement_range or y_range >= min_xy_movement_range)
         if DEBUG_CIRCLE and not has_min_movement: print(f"Debug Circle: Movement range X={x_range:.2f}, Y={y_range:.2f} too small (min={min_xy_movement_range}) -> FAIL")
-        # Don't return yet
+
 
         # 4. Dynamic: Distance Consistency (Circular Path) - Now much less strict
         distances = [math.sqrt((p[0] - shoulder.x)**2 + (p[1] - shoulder.y)**2) for p in palm_coords]
@@ -203,13 +203,13 @@ def detect_arm_circle(palm_history, shoulder, elbow, wrist,
         dist_variation_ratio = std_dev_dist / mean_dist
         is_dist_consistent = (dist_variation_ratio <= max_dist_variation_ratio)
         if DEBUG_CIRCLE and not is_dist_consistent: print(f"Debug Circle: Dist variation ratio {dist_variation_ratio:.2f} > {max_dist_variation_ratio} -> FAIL")
-        # Don't return yet
 
-        # 5. Dynamic: Sufficient Angular Change? - Now much less strict
+
+        # 5. Dynamic: Sufficient Angular Change? 
         cumulative_angle = calculate_cumulative_angle_change(palm_history, shoulder)
         has_enough_angle = (cumulative_angle >= min_cumulative_angle)
         if DEBUG_CIRCLE and not has_enough_angle: print(f"Debug Circle: Cumulative angle {cumulative_angle:.2f} rad < {min_cumulative_angle:.2f} rad -> FAIL")
-        # Don't return yet
+
 
         # Combine results - ALL must still pass for detection
         final_result = is_arm_straight and is_pointing_down and has_min_movement and is_dist_consistent and has_enough_angle
@@ -333,7 +333,7 @@ def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing
             l_knee = pose_landmarks[l_knee_idx]
             r_knee = pose_landmarks[r_knee_idx]
 
-            # --- NEW: Arm Circle ("Spin Around") Check ---
+
             left_arm_circle = False
             if all(lm.visibility > 0.5 for lm in [l_shoulder, l_elbow, l_wrist]) and left_palm_hist:
                  left_arm_circle = detect_arm_circle(left_palm_hist, l_shoulder, l_elbow, l_wrist)
@@ -342,8 +342,8 @@ def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing
                  right_arm_circle = detect_arm_circle(right_palm_hist, r_shoulder, r_elbow, r_wrist)
 
             if left_arm_circle or right_arm_circle:
-                 return "Spin Around" # Single label for either arm
-            # --- END NEW ---
+                 return "Spin Around" 
+
 
             # --- Waving Check ---
             left_waving = False
