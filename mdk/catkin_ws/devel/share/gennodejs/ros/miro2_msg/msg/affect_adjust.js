@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/miro2_msg/share/gennodejs/ros/miro2_msg/msg/affect_adjust.js

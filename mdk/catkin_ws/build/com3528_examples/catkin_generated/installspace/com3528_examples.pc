@@ -1,0 +1,8 @@
+prefix=/home/joel/pkgs/mdk-230105/catkin_ws/install
+
+Name: com3528_examples
+Description: Description of com3528_examples
+Version: 0.0.1
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/miro2_msg/include/miro2_msg/sensors_package.h

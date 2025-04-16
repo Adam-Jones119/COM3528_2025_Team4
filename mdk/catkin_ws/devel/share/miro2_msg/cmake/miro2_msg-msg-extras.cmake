@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/miro2_msg/share/miro2_msg/cmake/miro2_msg-msg-extras.cmake

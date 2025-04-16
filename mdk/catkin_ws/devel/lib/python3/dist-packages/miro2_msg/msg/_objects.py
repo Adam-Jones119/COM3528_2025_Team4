@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/miro2_msg/lib/python3/dist-packages/miro2_msg/msg/_objects.py

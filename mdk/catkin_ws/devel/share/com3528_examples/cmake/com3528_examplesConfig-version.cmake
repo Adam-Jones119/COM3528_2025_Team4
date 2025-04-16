@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/com3528_examples/share/com3528_examples/cmake/com3528_examplesConfig-version.cmake

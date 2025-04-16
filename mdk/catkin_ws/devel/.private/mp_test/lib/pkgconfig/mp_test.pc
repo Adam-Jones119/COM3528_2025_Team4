@@ -1,0 +1,8 @@
+prefix=/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/mp_test
+
+Name: mp_test
+Description: Description of mp_test
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
