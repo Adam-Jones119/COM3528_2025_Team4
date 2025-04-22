@@ -5,46 +5,32 @@ import numpy as np
 import time
 import os
 import copy
-
+import rospy
 import node
 import miro2 as miro
-
+import mp_test.msg
 import cv2
 
 
+class NodeDetectGesture():
 
-class NodeDetectGesture(node.Node):
-
-	def __init__(self, sys):
-
+	def __init__(self):
+          
 		node.Node.__init__(self, sys, "detect_gesture")
+		self.pub_gesture = self.publisher("gesture_topic", mp_test.msg.gesture)
 
 		# clock state
 		self.ticks = [0, 0]
 
-	def tick_camera(self, stream_index, msg_obj):
+	def tick_camera(self):
+		gesture_classification = "test"
+		msg = mp_test.msg.gesture()
 
-		# get image (grayscale)
-		img = self.state.frame_gry[stream_index]
+		# get image (BGR)
+		img_bgr = self.state.frame_bgr[stream_index]
 
-
-
-
-		"""
-		# store
-		msg = miro.msg.object_face()
-		msg.conf = conf
-		msg.corner = corn_d
-		msg.size = size_d
-		msg_obj.faces.append(msg)
-		"""
-
-		# tick
+		# publish and tick clock
+		msg.gesture = gesture_classification
 		self.ticks[stream_index] += 1
-
-
-		# ok
-		return return_var
-
-
-
+		rospy.loginfo(f"[gesture_publisher]: {msg}")
+		self.pub_gesture.publish(msg)

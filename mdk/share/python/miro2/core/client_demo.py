@@ -57,6 +57,7 @@ from node_detect_motion import *
 from node_detect_ball import *
 from node_detect_face import *
 from node_detect_audio import *
+from node_detect_gesture import *
 from node_spatial import *
 
 
@@ -132,7 +133,7 @@ class DemoState:
 		self.in_cos_body = 0.0
 		self.in_cos_head = 0.0
 		self.in_motion = 0.0
-		self.in_vocalising = 0.0
+		self.in_vocalising = 0
 		self.in_making_noise = 0.0
 
 		# cameras
@@ -200,6 +201,7 @@ class DemoNodes:
 			self.detect_motion = NodeDetectMotion(sys)
 			self.detect_face = NodeDetectFace(sys)
 			self.detect_ball = NodeDetectBall(sys)
+			self.detect_gesture = NodeDetectGesture(sys)
 
 		# instantiate
 		if self.client_type == "mics":
@@ -763,6 +765,7 @@ class DemoSystem(object):
 		# spatial pipeline in the main node
 		detect_motion = self.animal_flags & miro.constants.ANIMAL_DETECT_MOTION
 		self.nodes.detect_motion.tick_camera(stream_index, detect_motion)
+		self.nodes.detect_gesture.tick_camera(stream_index) ### ----------------------------------- IS THIS CORRECT GESTURE?? CALLBACK
 		frame_mov = self.state.frame_mov[stream_index]
 		if not frame_mov is None:
 			msg = self.bridge.cv2_to_imgmsg(frame_mov, encoding='mono8')
