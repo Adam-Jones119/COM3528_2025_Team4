@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import cv2
 import mediapipe as mp
 from collections import deque, Counter
@@ -411,6 +414,51 @@ def get_final_classification(history, waving_threshold=6, knee_smacking_threshol
     elif counts: return counts.most_common(1)[0][0]
     else: return "No Pose Detected"
 
+
+def callback_caml(self, ros_image):  # Left camera
+    self.callback_cam(ros_image, 0)
+
+def callback_camr(self, ros_image):  # Right camera
+    self.callback_cam(ros_image, 1)
+
+def callback_cam(self, ros_image, index):
+    """
+    Callback function executed upon image arrival
+    """
+    # Silently(-ish) handle corrupted JPEG frames
+    try:
+        # Convert compressed ROS image to raw CV image
+        image = self.image_converter.compressed_imgmsg_to_cv2(ros_image, "rgb8")
+        # Convert from OpenCV's default BGR to RGB
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # Store image as class attribute for further use
+        self.input_camera[index] = image
+        # Get image dimensions
+        self.frame_height, self.frame_width, channels = image.shape
+        self.x_centre = self.frame_width / 2.0
+        self.y_centre = self.frame_height / 2.0
+        # Raise the flag: A new frame is available for processing
+        self.new_frame[index] = True
+    except CvBridgeError as e:
+        # Ignore corrupted frames
+        pass
+
+def detect_gesture(self, frame, index):
+    """
+    Image processing operations for gesture analysis
+    """
+    if frame is None:  # Sanity check
+        return
+
+    # Debug window to show the frame
+    if self.DEBUG:
+        cv2.imshow("camera" + str(index), frame)
+        cv2.waitKey(1)
+
+    # Flag this frame as processed, so that it's not reused in case of lag
+    self.new_frame[index] = False
+
+    processed_img = frame
 
 cap = cv2.VideoCapture(0)
 

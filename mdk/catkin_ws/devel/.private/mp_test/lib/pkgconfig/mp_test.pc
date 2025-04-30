@@ -3,6 +3,6 @@ prefix=/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/mp_test
 Name: mp_test
 Description: Description of mp_test
 Version: 0.0.0
-Cflags: 
-Libs: -L${prefix}/lib 
-Requires: 
+Cflags: -I/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/mp_test/include -I/home/joel/pkgs/mdk-230105/catkin_ws/src/mp_test/include
+Libs: -L${prefix}/lib -lmp_test
+Requires: rospy std_msgs miro2_msg message_runtime sensor_msgs

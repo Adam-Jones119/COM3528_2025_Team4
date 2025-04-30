@@ -1,0 +1,1 @@
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/mp_test/share/gennodejs/ros/mp_test/_index.js
