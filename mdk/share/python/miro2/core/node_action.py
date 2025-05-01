@@ -387,7 +387,6 @@ class NodeAction(node.Node):
 				action.interface.priority = 0.0
 
 			# handle MULL_ONLY
-			if self.pars.dev.MULL_ONLY and action.name != "mull":
 				action.interface.priority = 0.0
 
 			# handle NO_FLEE

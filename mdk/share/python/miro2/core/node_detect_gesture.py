@@ -11,6 +11,7 @@ import miro2 as miro
 import mp_test.msg
 import cv2
 from cv_bridge import CvBridge, CvBridgeError  # ROS -> OpenCV converter
+import sensor_msgs.msg
 
 import mediapipe as mp
 from collections import deque, Counter
@@ -18,7 +19,7 @@ import numpy as np
 import math
 
 
-class NodeDetectGesture():
+class NodeDetectGesture(node.Node):
 
 	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	# MediaPipe functions
@@ -43,7 +44,7 @@ class NodeDetectGesture():
 		"""Returns (x, y, z) coordinates from a landmark."""
 		return landmark.x, landmark.y, landmark.z
 
-	def calculate_angle(a, b, c):
+	def calculate_angle(self, a, b, c):
 		"""Calculates angle ABC (in degrees)"""
 		try:
 			# Calculate vectors BA and BC
@@ -81,7 +82,7 @@ class NodeDetectGesture():
 			return float('inf')
 
 	# --- NEW: Helper function for cumulative angle change around a center ---
-	def calculate_cumulative_angle_change(points_history, center):
+	def calculate_cumulative_angle_change(self, points_history, center):
 		"""Calculates the total angular change (in radians) of points around a center."""
 		if len(points_history) < 3 or not center: return 0
 
@@ -110,15 +111,15 @@ class NodeDetectGesture():
 		return abs(total_angle_change) # Return absolute total change
 
 	# --- Palm Center Function (from Pose) ---
-	def get_palm_center(landmarks, hand='left'):
+	def get_palm_center(self, landmarks, hand='left'):
 		"""Compute approximate palm center using Pose landmarks."""
 		try:
 			if hand == 'left':
-				indices = [mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.LEFT_PINKY,
-						mp_pose.PoseLandmark.LEFT_INDEX, mp_pose.PoseLandmark.LEFT_THUMB]
+				indices = [self.mp_pose.PoseLandmark.LEFT_WRIST, self.mp_pose.PoseLandmark.LEFT_PINKY,
+						self.mp_pose.PoseLandmark.LEFT_INDEX, self.mp_pose.PoseLandmark.LEFT_THUMB]
 			else: 
-				indices = [mp_pose.PoseLandmark.RIGHT_WRIST, mp_pose.PoseLandmark.RIGHT_PINKY,
-						mp_pose.PoseLandmark.RIGHT_INDEX, mp_pose.PoseLandmark.RIGHT_THUMB]
+				indices = [self.mp_pose.PoseLandmark.RIGHT_WRIST, self.mp_pose.PoseLandmark.RIGHT_PINKY,
+						self.mp_pose.PoseLandmark.RIGHT_INDEX, self.mp_pose.PoseLandmark.RIGHT_THUMB]
 
 			# Ensure landmarks indices are valid before accessing
 			max_index = max(idx.value for idx in indices)
@@ -138,7 +139,7 @@ class NodeDetectGesture():
 			return None
 
 	# --- Direction Changes Function ---
-	def count_direction_changes(values, noise_threshold=0.015):
+	def count_direction_changes(self, values, noise_threshold=0.015):
 		"""Count direction changes, ignoring small noise."""
 		if len(values) < 3: return 0
 		changes = 0
@@ -154,7 +155,7 @@ class NodeDetectGesture():
 		return changes
 
 	# --- Arm Circling Detection Function ---
-	def detect_arm_circle(palm_history, shoulder, elbow, wrist,
+	def detect_arm_circle(self, palm_history, shoulder, elbow, wrist,
 						straight_arm_angle_thresh=40,   
 						downward_offset=0.01,            
 						min_cumulative_angle=math.pi / 30, 
@@ -173,8 +174,8 @@ class NodeDetectGesture():
 		if not all(hasattr(lm, 'visibility') and lm.visibility > 0.4 for lm in [shoulder, elbow, wrist]): 
 			# if DEBUG_CIRCLE: print("Debug Circle: Low visibility on key landmarks (S/E/W).")
 			return False
-		if len(palm_history) < palm_history_length // 2 : 
-			# if DEBUG_CIRCLE: print(f"Debug Circle: Insufficient history ({len(palm_history)} < {palm_history_length // 2}).")
+		if len(palm_history) < self.palm_history_length // 2 : 
+			# if DEBUG_CIRCLE: print(f"Debug Circle: Insufficient history ({len(palm_history)} < {self.palm_history_length // 2}).")
 			return False
 		try:
 			if not all(isinstance(p, tuple) and len(p) == 3 for p in palm_history):
@@ -188,7 +189,7 @@ class NodeDetectGesture():
 		# --- Gesture Specific Checks ---
 		try:
 			# 1. Static: Arm Straightness
-			elbow_angle = calculate_angle(shoulder, elbow, wrist)
+			elbow_angle = self.calculate_angle(shoulder, elbow, wrist)
 			is_arm_straight = (elbow_angle >= straight_arm_angle_thresh)
 			if DEBUG_CIRCLE and not is_arm_straight: print(f"Debug Circle: Arm angle {elbow_angle:.1f} < {straight_arm_angle_thresh} -> FAIL")
 
@@ -223,7 +224,7 @@ class NodeDetectGesture():
 
 
 			# 5. Dynamic: Sufficient Angular Change? 
-			cumulative_angle = calculate_cumulative_angle_change(palm_history, shoulder)
+			cumulative_angle = self.calculate_cumulative_angle_change(palm_history, shoulder)
 			has_enough_angle = (cumulative_angle >= min_cumulative_angle)
 			if DEBUG_CIRCLE and not has_enough_angle: print(f"Debug Circle: Cumulative angle {cumulative_angle:.2f} rad < {min_cumulative_angle:.2f} rad -> FAIL")
 
@@ -241,54 +242,54 @@ class NodeDetectGesture():
 			return False
 
 	# --- Dynamic Gesture Detection Functions (Waving, Knee Smacking - from Pose) ---
-	def detect_waving(palm_history, shoulder_y, threshold=0.08, min_direction_changes=2):
+	def detect_waving(self, palm_history, shoulder_y, threshold=0.08, min_direction_changes=2):
 		"""Detect waving (horizontal oscillation) above the shoulder."""
-		if len(palm_history) < palm_history_length: return False
+		if len(palm_history) < self.palm_history_length: return False
 		try:
 			avg_palm_pos = np.mean(np.array(palm_history), axis=0)
 			avg_palm_y = avg_palm_pos[1]
 			if avg_palm_y >= shoulder_y: return False 
 			x_values = [p[0] for p in palm_history]
 			if max(x_values) - min(x_values) < threshold: return False
-			changes = count_direction_changes(x_values)
+			changes = self.count_direction_changes(x_values)
 			return changes >= min_direction_changes
 		except (ValueError, IndexError): return False
 
-	def detect_knee_smacking(palm_history, knee_x, knee_y, knee_z,
+	def detect_knee_smacking(self, alm_history, knee_x, knee_y, knee_z,
 							proximity_x_thresh=0.18, proximity_y_thresh=0.18,
 							y_threshold=0.08, z_threshold=0.08, min_direction_changes=2):
 		"""Detect knee smacking (oscillation near knee)."""
-		if len(palm_history) < palm_history_length: return False
+		if len(palm_history) < self.palm_history_length: return False
 		try:
 			avg_palm_pos = np.mean(np.array(palm_history), axis=0)
 			avg_palm_x, avg_palm_y = avg_palm_pos[0], avg_palm_pos[1]
 			if abs(avg_palm_x - knee_x) > proximity_x_thresh or \
 			abs(avg_palm_y - knee_y) > proximity_y_thresh: return False 
 			y_values = [p[1] for p in palm_history]; z_values = [p[2] for p in palm_history]
-			y_range = max(y_values) - min(y_values); y_changes = count_direction_changes(y_values)
-			z_range = max(z_values) - min(z_values); z_changes = count_direction_changes(z_values)
+			y_range = max(y_values) - min(y_values); y_changes = self.count_direction_changes(y_values)
+			z_range = max(z_values) - min(z_values); z_changes = self.count_direction_changes(z_values)
 			if (y_range >= y_threshold and y_changes >= min_direction_changes) or \
 			(z_range >= z_threshold and z_changes >= min_direction_changes): return True
 			return False
 		except (ValueError, IndexError): return False
 
 
-	def is_pointing_down(hand_landmarks):
+	def is_pointing_down(self, hand_landmarks):
 		"""
 		Checks if the index finger is pointing down and other fingers are curled.
 		Uses MediaPipe Hand landmarks. More sensitive version.
 		"""
 		try:
 			
-			idx_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-			idx_mcp = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_MCP]
-			idx_pip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_PIP] 
+			idx_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_TIP]
+			idx_mcp = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_MCP]
+			idx_pip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_PIP] 
 
 			
-			mid_tip = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_TIP]
-			rng_tip = hand_landmarks.landmark[mp_hands.HandLandmark.RING_FINGER_TIP]
-			pnk_tip = hand_landmarks.landmark[mp_hands.HandLandmark.PINKY_TIP]
-			mid_pip = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_PIP]
+			mid_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.MIDDLE_FINGER_TIP]
+			rng_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.RING_FINGER_TIP]
+			pnk_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.PINKY_TIP]
+			mid_pip = hand_landmarks.landmark[self.mp_hands.HandLandmark.MIDDLE_FINGER_PIP]
 
 
 			# 1. Check if Index finger is pointing downwards
@@ -315,7 +316,7 @@ class NodeDetectGesture():
 			return False
 
 
-	def classify_pose(pose_landmarks, left_palm_hist, right_palm_hist, left_pointing, right_pointing):
+	def classify_pose(self, pose_landmarks, left_palm_hist, right_palm_hist, left_pointing, right_pointing):
 		"""
 		Classify pose: "Sit" (Pointing) > "Spin Around" (Arm Circle) > Waving > Knee Smacking > Hands Up.
 		Labels are NOT swapped for mirroring.
@@ -328,17 +329,17 @@ class NodeDetectGesture():
 				return "Sit"
 
 			# --- Check Pose Landmarks Exist for other gestures ---
-			if pose_landmarks and len(pose_landmarks) > mp_pose.PoseLandmark.RIGHT_WRIST.value: # Basic check
+			if pose_landmarks and len(pose_landmarks) > self.mp_pose.PoseLandmark.RIGHT_WRIST.value: # Basic check
 
 				# Define landmark indices
-				l_shoulder_idx = mp_pose.PoseLandmark.LEFT_SHOULDER.value
-				r_shoulder_idx = mp_pose.PoseLandmark.RIGHT_SHOULDER.value
-				l_elbow_idx = mp_pose.PoseLandmark.LEFT_ELBOW.value
-				r_elbow_idx = mp_pose.PoseLandmark.RIGHT_ELBOW.value
-				l_wrist_idx = mp_pose.PoseLandmark.LEFT_WRIST.value
-				r_wrist_idx = mp_pose.PoseLandmark.RIGHT_WRIST.value
-				l_knee_idx = mp_pose.PoseLandmark.LEFT_KNEE.value
-				r_knee_idx = mp_pose.PoseLandmark.RIGHT_KNEE.value
+				l_shoulder_idx = self.mp_pose.PoseLandmark.LEFT_SHOULDER.value
+				r_shoulder_idx = self.mp_pose.PoseLandmark.RIGHT_SHOULDER.value
+				l_elbow_idx = self.mp_pose.PoseLandmark.LEFT_ELBOW.value
+				r_elbow_idx = self.mp_pose.PoseLandmark.RIGHT_ELBOW.value
+				l_wrist_idx = self.mp_pose.PoseLandmark.LEFT_WRIST.value
+				r_wrist_idx = self.mp_pose.PoseLandmark.RIGHT_WRIST.value
+				l_knee_idx = self.mp_pose.PoseLandmark.LEFT_KNEE.value
+				r_knee_idx = self.mp_pose.PoseLandmark.RIGHT_KNEE.value
 
 				# Get landmarks safely
 				l_shoulder = pose_landmarks[l_shoulder_idx]
@@ -353,10 +354,10 @@ class NodeDetectGesture():
 
 				left_arm_circle = False
 				if all(lm.visibility > 0.5 for lm in [l_shoulder, l_elbow, l_wrist]) and left_palm_hist:
-					left_arm_circle = detect_arm_circle(left_palm_hist, l_shoulder, l_elbow, l_wrist)
+					left_arm_circle = self.detect_arm_circle(left_palm_hist, l_shoulder, l_elbow, l_wrist)
 				right_arm_circle = False
 				if all(lm.visibility > 0.5 for lm in [r_shoulder, r_elbow, r_wrist]) and right_palm_hist:
-					right_arm_circle = detect_arm_circle(right_palm_hist, r_shoulder, r_elbow, r_wrist)
+					right_arm_circle = self.detect_arm_circle(right_palm_hist, r_shoulder, r_elbow, r_wrist)
 
 				if left_arm_circle or right_arm_circle:
 					return "Spin Around" 
@@ -365,10 +366,10 @@ class NodeDetectGesture():
 				# --- Waving Check ---
 				left_waving = False
 				if l_shoulder.visibility > 0.5 and left_palm_hist:
-					left_waving = detect_waving(left_palm_hist, l_shoulder.y)
+					left_waving = self.detect_waving(left_palm_hist, l_shoulder.y)
 				right_waving = False
 				if r_shoulder.visibility > 0.5 and right_palm_hist:
-					right_waving = detect_waving(right_palm_hist, r_shoulder.y)
+					right_waving = self.detect_waving(right_palm_hist, r_shoulder.y)
 
 				if left_waving and right_waving: return "Waving Both Hands"
 				elif left_waving: return "Waving Left Hand"
@@ -377,10 +378,10 @@ class NodeDetectGesture():
 				# --- Knee Smacking Check ---
 				left_knee_smack = False
 				if l_knee.visibility > 0.5 and left_palm_hist:
-					left_knee_smack = detect_knee_smacking(left_palm_hist, l_knee.x, l_knee.y, l_knee.z)
+					left_knee_smack = self.detect_knee_smacking(left_palm_hist, l_knee.x, l_knee.y, l_knee.z)
 				right_knee_smack = False
 				if r_knee.visibility > 0.5 and right_palm_hist:
-					right_knee_smack = detect_knee_smacking(right_palm_hist, r_knee.x, r_knee.y, r_knee.z)
+					right_knee_smack = self.detect_knee_smacking(right_palm_hist, r_knee.x, r_knee.y, r_knee.z)
 
 				if left_knee_smack or right_knee_smack: return "Knee Smacking"
 
@@ -402,7 +403,7 @@ class NodeDetectGesture():
 
 
 
-	def get_final_classification(history, waving_threshold=6, knee_smacking_threshold=6, pointing_threshold=4, spin_threshold=5): # Added spin_threshold
+	def get_final_classification(self, history, waving_threshold=6, knee_smacking_threshold=6, pointing_threshold=4, spin_threshold=5): # Added spin_threshold
 		"""Determine final classification. Priority: Sit > Spin > Waving > Knee Smacking."""
 		if not history: return "No Pose Detected"
 		counts = Counter(history)
@@ -426,9 +427,9 @@ class NodeDetectGesture():
 	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	# Process video feed
 
-	def process_img(image_bgr):
-		with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.75) as pose, \
-		mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.6, min_tracking_confidence=0.75) as hands: 
+	def process_img(self, image_bgr):
+		with self.mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.75) as pose, \
+		self.mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.6, min_tracking_confidence=0.75) as hands: 
 			
 			image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 			image_rgb.flags.writeable = False 
@@ -440,19 +441,19 @@ class NodeDetectGesture():
 			current_pose_landmarks = None
 			if results_pose.pose_landmarks:
 				current_pose_landmarks = results_pose.pose_landmarks.landmark
-				left_palm = get_palm_center(current_pose_landmarks, 'left')
-				right_palm = get_palm_center(current_pose_landmarks, 'right')
-				if left_palm: left_palm_history.append(left_palm)
-				if right_palm: right_palm_history.append(right_palm)
+				left_palm = self.get_palm_center(current_pose_landmarks, 'left')
+				right_palm = self.get_palm_center(current_pose_landmarks, 'right')
+				if left_palm: self.left_palm_history.append(left_palm)
+				if right_palm: self.right_palm_history.append(right_palm)
 
-				mp_drawing.draw_landmarks(
-					image_bgr, results_pose.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-					landmark_drawing_spec=mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
-					connection_drawing_spec=mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2))
+				self.mp_drawing.draw_landmarks(
+					image_bgr, results_pose.pose_landmarks, self.mp_pose.POSE_CONNECTIONS,
+					landmark_drawing_spec=self.mp_drawing.DrawingSpec(color=(245, 117, 66), thickness=2, circle_radius=2),
+					connection_drawing_spec=self.mp_drawing.DrawingSpec(color=(245, 66, 230), thickness=2, circle_radius=2))
 			else:
 
-				left_palm_history.clear()
-				right_palm_history.clear()
+				self.left_palm_history.clear()
+				self.right_palm_history.clear()
 
 
 			left_hand_pointing = False
@@ -461,38 +462,35 @@ class NodeDetectGesture():
 				for hand_idx, hand_landmarks in enumerate(results_hands.multi_hand_landmarks):
 
 					handedness = results_hands.multi_handedness[hand_idx].classification[0].label
-					is_pointing = is_pointing_down(hand_landmarks)
+					is_pointing = self.is_pointing_down(hand_landmarks)
 
 					if handedness == "Left":
 						left_hand_pointing = is_pointing
 					elif handedness == "Right":
 						right_hand_pointing = is_pointing
 
-					mp_drawing.draw_landmarks(
-						image_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-						landmark_drawing_spec=mp_drawing.DrawingSpec(color=(121, 22, 76), thickness=2, circle_radius=3), # Purpleish
-						connection_drawing_spec=mp_drawing.DrawingSpec(color=(121, 44, 250), thickness=2, circle_radius=2)) # Light Purpleish
+					self.mp_drawing.draw_landmarks(
+						image_bgr, hand_landmarks, self.mp_hands.HAND_CONNECTIONS,
+						landmark_drawing_spec=self.mp_drawing.DrawingSpec(color=(121, 22, 76), thickness=2, circle_radius=3), # Purpleish
+						connection_drawing_spec=self.mp_drawing.DrawingSpec(color=(121, 44, 250), thickness=2, circle_radius=2)) # Light Purpleish
 
-			current_classification = classify_pose(
+			current_classification = self.classify_pose(
 				current_pose_landmarks, 
-				left_palm_history,
-				right_palm_history,
+				self.left_palm_history,
+				self.right_palm_history,
 				left_hand_pointing, 
 				right_hand_pointing 
 			)
 
 
-			classification_history.append(current_classification)
-			final_classification = get_final_classification(classification_history)
+			self.classification_history.append(current_classification)
+			final_classification = self.get_final_classification(self.classification_history)
 
 
-			final_image = cv2.flip(image_bgr, 1)
-			cv2.putText(final_image, f"Pose: {final_classification}", (10, 40),
-						cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
-			cv2.imshow('Pose and Hand Recognition', final_image)
-
-			if cv2.waitKey(5) & 0xFF == 27:
-				break
+			# final_image = cv2.flip(image_bgr, 1)
+			# cv2.putText(final_image, f"Pose: {final_classification}", (10, 40),
+			# 			cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+			# cv2.imshow('Pose and Hand Recognition', final_image)
 			
 
 			return final_classification
@@ -501,22 +499,37 @@ class NodeDetectGesture():
 	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 	# ROS interface
 
-	def __init__(self):
-	
+	def __init__(self, sys):
 		node.Node.__init__(self, sys, "detect_gesture")
-		self.pub_gesture = self.publisher("gesture_topic", mp_test.msg.gesture)
 
-		# clock state
+		# CV bridge for image conversion
+		self.bridge = CvBridge()
+
+		# Clock state
 		self.ticks = [0, 0]
 
-	def tick_camera(self):
-		msg = mp_test.msg.gesture()
+	def tick_camera(self, stream_index):
 
-		# get image (BGR)
-		img_bgr = self.state.frame_bgr[stream_index]
+		if self.ticks[stream_index] % 5 == 0:
+			msg = mp_test.msg.gesture()
 
-		# publish and tick clock
-		msg.gesture = process_img(img_bgr)
+			# Get image (BGR)
+			img_bgr = self.state.frame_bgr[stream_index]
+
+			# Process gesture (assumes function exists)
+			gesture = self.process_img(img_bgr)
+			msg.gesture = gesture
+
+			# Log gesture
+			rospy.loginfo(f"[gesture_publisher]: {msg}")
+
+			# Display camera feed
+			img_bgr = cv2.resize(img_bgr, (1280, 720), interpolation=cv2.INTER_LINEAR)
+
+			cv2.putText(img_bgr, f"Pose: {gesture}", (10, 40),
+						cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2, cv2.LINE_AA)
+			cv2.imshow('Pose and Hand Recognition', img_bgr)
+
+			cv2.waitKey(1)
+		
 		self.ticks[stream_index] += 1
-		rospy.loginfo(f"[gesture_publisher]: {msg}")
-		self.pub_gesture.publish(msg)
