@@ -1,0 +1,2 @@
+- setup-file:
+    local-name: /home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/miro2_msg/setup.sh

@@ -1,0 +1,5 @@
+COM3528/com3528_examples
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/com3528_examples/cmake.lock /home/joel/pkgs/mdk-230105/catkin_ws/devel/./cmake.lock
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/com3528_examples/share/com3528_examples/cmake/com3528_examplesConfig.cmake /home/joel/pkgs/mdk-230105/catkin_ws/devel/share/com3528_examples/cmake/com3528_examplesConfig.cmake
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/com3528_examples/share/com3528_examples/cmake/com3528_examplesConfig-version.cmake /home/joel/pkgs/mdk-230105/catkin_ws/devel/share/com3528_examples/cmake/com3528_examplesConfig-version.cmake
+/home/joel/pkgs/mdk-230105/catkin_ws/devel/.private/com3528_examples/lib/pkgconfig/com3528_examples.pc /home/joel/pkgs/mdk-230105/catkin_ws/devel/lib/pkgconfig/com3528_examples.pc
