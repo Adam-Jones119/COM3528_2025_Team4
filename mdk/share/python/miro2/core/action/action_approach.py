@@ -87,7 +87,7 @@ class ActionApproach(action_types.ActionTemplate):
 			priority += 1
 
 		# ok
-		rospy.loginfo(f"Approach priotity: {priority}")
+		rospy.loginfo(f"Approach priority: {priority}")
 		return priority
 
 	def event_start(self):
